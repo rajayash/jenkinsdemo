@@ -585,30 +585,26 @@ Resources:
               # Start and enable CodeDeploy Agent
               systemctl start codedeploy-agent
 
-              
               systemctl enable codedeploy-agent
 
-              # Install and configure Apache
-              dnf install -y httpd
-
-              systemctl start httpd
-              systemctl enable httpd
+              python3 get-pip.py
+              python3 -m pip install --upgrade pip
+              python3 -m pip install "flask>=3.0.0" "werkzeug>=3.0.0" "pytest" "pytest-cov"
 
               # Create test page
-              echo "<html><body><h1>Instance is running</h1></body></html>" > /var/www/html/index.html
+              echo 'from flask import Flask;app = Flask(__name__);@app.route("/");def hello_world():;    return "Hello, World!";if __name__ == "__main__":;    app.run(host="0.0.0.0", port=5000, debug=True)' | tr ';' '\n' > hello.py
+              python3 hello.py
 
               # Wait for services to be fully operational
               echo "Waiting for services to start..."
               sleep 10
               echo "Installing dependencies..."
               curl https://bootstrap.pypa.io/get-pip.py -o get-pip.py
-              python3 get-pip.py
-              python3 -m pip install --upgrade pip
-              python3 -m pip install flask>=3.0.0 werkzeug>=3.0.0 pytest pytest-cov
+
               # Print status information
               echo "=== Installation Status ==="
               systemctl status codedeploy-agent
-              systemctl status httpd
+
               echo "=== End Status ==="
 
               # Signal success
