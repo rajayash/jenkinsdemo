@@ -108,7 +108,9 @@ Mappings:
       AMI: ami-0b9fd8b55a6e3c9d5
     ap-southeast-2:
       AMI: ami-0b9fd8b55a6e3c9d5
+
 Resources:
+
   CodeBuildRole:
     Type: AWS::IAM::Role
     Properties:
@@ -171,6 +173,9 @@ Resources:
 
   JenkinsServer:
     Type: AWS::EC2::Instance
+    CreationPolicy:
+      ResourceSignal:
+        Timeout: PT15M
     Metadata:
       AWS::CloudFormation::Init:
         configSets:
@@ -189,281 +194,164 @@ Resources:
             /etc/nginx/nginx.conf:
               content: !Sub |
                 user nginx;
-                worker_processes 1;
+                worker_processes auto;
                 error_log /var/log/nginx/error.log;
-                pid /var/run/nginx.pid;
+                pid /run/nginx.pid;
+
+                include /usr/share/nginx/modules/*.conf;
+
                 events {
                     worker_connections 1024;
                 }
+
                 http {
-                    include /etc/nginx/mime.types;
-                    default_type application/octet-stream;
-                    log_format main '$remote_addr - $remote_user [$time_local] "$request" '
-                                  '$status $body_bytes_sent "$http_referer" '
-                                  '"$http_user_agent" "$http_x_forwarded_for"';
-                    access_log /var/log/nginx/access.log main;
-                    sendfile on;
-                    keepalive_timeout 65;
-                    include /etc/nginx/conf.d/*.conf;
-                    index index.html index.htm;
+                    log_format  main  '$remote_addr - $remote_user [$time_local] "$request" '
+                                    '$status $body_bytes_sent "$http_referer" '
+                                    '"$http_user_agent" "$http_x_forwarded_for"';
+
+                    access_log  /var/log/nginx/access.log  main;
+                    sendfile            on;
+                    tcp_nopush         on;
+                    tcp_nodelay        on;
+                    keepalive_timeout  65;
+                    types_hash_max_size 4096;
+                    include             /etc/nginx/mime.types;
+                    default_type        application/octet-stream;
+
                     server {
-                        listen 80;
-                        server_name _;
+                        listen       80;
+                        listen       [::]:80;
+                        server_name  _;
+                        root         /usr/share/nginx/html;
+
                         location / {
-                          proxy_pass http://127.0.0.1:8080;
-                          proxy_set_header Host $host;
-                          proxy_set_header X-Real-IP $remote_addr;
-                          proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-                          proxy_connect_timeout 150;
-                          proxy_send_timeout 100;
-                          proxy_read_timeout 100;
-                          proxy_buffers 4 32k;
-                          client_max_body_size 8m;
-                          client_body_buffer_size 128k;
+                            proxy_pass          http://127.0.0.1:8080;
+                            proxy_http_version  1.1;
+                            proxy_set_header    Host $host;
+                            proxy_set_header    X-Real-IP $remote_addr;
+                            proxy_set_header    X-Forwarded-For $proxy_add_x_forwarded_for;
+                            proxy_set_header    X-Forwarded-Proto $scheme;
+                            proxy_max_temp_file_size 0;
+                            proxy_connect_timeout     150;
+                            proxy_send_timeout        100;
+                            proxy_read_timeout        100;
+                            proxy_buffer_size         8k;
+                            proxy_buffers            4 32k;
+                            proxy_busy_buffers_size  64k;
+                            proxy_temp_file_write_size 64k;
                         }
+
                         location /password.txt {
-                          alias /web/initalpass.html;
+                            alias /web/initalpass.html;
                         }
                     }
                 }
               mode: "000444"
               owner: root
               group: root
-          services:
-            sysvinit:
-              nginx:
-                enabled: true
-                ensureRunning: true
-                files:
-                  - /etc/nginx/nginx.conf
     Properties:
       KeyName: !Ref KeyName
-      ImageId: !FindInMap 
-        - AWSRegionArch2AMI
-        - !Ref AWS::Region
-        - AMI
+      ImageId: !FindInMap [AWSRegionArch2AMI, !Ref "AWS::Region", AMI]
+      InstanceType: !Ref JenkinsInstanceType
+      IamInstanceProfile: !Ref JenkinsInstanceProfile
       NetworkInterfaces:
         - AssociatePublicIpAddress: true
           DeviceIndex: 0
           GroupSet:
             - !Ref JenkinsSecurityGroup
           SubnetId: !Ref PublicSubnet1
-      InstanceType: !Ref JenkinsInstanceType
-      IamInstanceProfile: !Ref JenkinsInstanceProfile
       UserData:
-        Fn::Base64: !Sub |
-          #!/bin/bash -xe
-          
-          # Enable logging of the user data script
-          exec > >(tee /var/log/user-data.log) 2>&1
-          
-          # Update system
-          dnf update -y
-          dnf install -y aws-cfn-bootstrap wget git
+        Fn::Base64:
+          !Sub |
+            #!/bin/bash -xe
+            
+            # Enable logging
+            exec > >(tee /var/log/user-data.log|logger -t user-data -s 2>/dev/console) 2>&1
 
-          # Create web directory for Jenkins password
-          mkdir -p /web
-          
-          # Initialize cfn
-          /opt/aws/bin/cfn-init -v \
-            --stack ${AWS::StackName} \
-            --resource JenkinsServer \
-            --configsets install_all \
-            --region ${AWS::Region}
-          
-          # Install Java 17
-          dnf remove -y java* || true
-          dnf install -y java-17-amazon-corretto-devel
-          
-          # Verify Java installation
-          java -version
-          
-          # Create Jenkins user and directories
-          useradd -r -m -U -d /var/lib/jenkins -s /bin/bash jenkins || true
-          
-          # Create required directories
-          mkdir -p /var/lib/jenkins
-          mkdir -p /var/cache/jenkins/tmp
-          mkdir -p /var/log/jenkins
-          
-          # Install Jenkins
-          wget -O /etc/yum.repos.d/jenkins.repo https://pkg.jenkins.io/redhat-stable/jenkins.repo
-          rpm --import https://pkg.jenkins.io/redhat-stable/jenkins.io-2023.key
-          dnf clean all
-          dnf makecache
-          dnf install -y --nogpgcheck jenkins
+            # Update system
+            dnf update -y
 
-          # Install and configure nginx
-          dnf install -y nginx
-          
-          # Configure nginx
-          cat > /etc/nginx/nginx.conf << 'EOL'
-          user nginx;
-          worker_processes auto;
-          error_log /var/log/nginx/error.log;
-          pid /run/nginx.pid;
+            # Install required packages
+            dnf install -y aws-cfn-bootstrap wget git
 
-          include /usr/share/nginx/modules/*.conf;
+            # Create directories
+            mkdir -p /web
+            mkdir -p /var/lib/jenkins
+            mkdir -p /var/cache/jenkins/tmp
+            mkdir -p /var/log/jenkins
 
-          events {
-              worker_connections 1024;
-          }
+            # Initialize cfn
+            /opt/aws/bin/cfn-init -v \
+              --stack ${AWS::StackName} \
+              --resource JenkinsServer \
+              --configsets install_all \
+              --region ${AWS::Region}
 
-          http {
-              log_format  main  '$remote_addr - $remote_user [$time_local] "$request" '
-                              '$status $body_bytes_sent "$http_referer" '
-                              '"$http_user_agent" "$http_x_forwarded_for"';
+            # Install Java 17
+            dnf remove -y java* || true
+            dnf install -y java-17-amazon-corretto-devel
+ 
+            # Install Jenkins
+            wget -O /etc/yum.repos.d/jenkins.repo https://pkg.jenkins.io/redhat-stable/jenkins.repo
+            rpm --import https://pkg.jenkins.io/redhat-stable/jenkins.io-2023.key
+            dnf clean all
+            dnf makecache
+            dnf install -y --nogpgcheck jenkins
 
-              access_log  /var/log/nginx/access.log  main;
-              sendfile            on;
-              tcp_nopush         on;
-              tcp_nodelay        on;
-              keepalive_timeout  65;
-              types_hash_max_size 4096;
-              include             /etc/nginx/mime.types;
-              default_type        application/octet-stream;
+            # Set permissions
+            chown -R jenkins:jenkins /var/lib/jenkins
+            chown -R jenkins:jenkins /var/cache/jenkins
+            chown -R jenkins:jenkins /var/log/jenkins
+            chmod 750 /var/lib/jenkins
 
-              server {
-                  listen       80;
-                  listen       [::]:80;
-                  server_name  _;
-                  root         /usr/share/nginx/html;
+            # Configure Jenkins
+            cat > /etc/sysconfig/jenkins << 'EOL'
+            JAVA_HOME="/usr/lib/jvm/java-17-amazon-corretto"
+            JENKINS_JAVA_OPTIONS="-Djava.awt.headless=true -Djenkins.install.runSetupWizard=true"
+            JENKINS_HOME="/var/lib/jenkins"
+            JENKINS_JAVA_CMD="/usr/bin/java"
+            JENKINS_USER="jenkins"
+            JENKINS_GROUP="jenkins"
+            JENKINS_PORT="8080"
+            JENKINS_DEBUG_LEVEL="5"
+            JENKINS_ENABLE_ACCESS_LOG="yes"
+            JENKINS_ARGS=""
+            EOL
 
-                  location / {
-                      proxy_pass          http://127.0.0.1:8080;
-                      proxy_http_version  1.1;
-                      proxy_set_header    Host $host;
-                      proxy_set_header    X-Real-IP $remote_addr;
-                      proxy_set_header    X-Forwarded-For $proxy_add_x_forwarded_for;
-                      proxy_set_header    X-Forwarded-Proto $scheme;
-                      proxy_max_temp_file_size 0;
-                      proxy_connect_timeout     150;
-                      proxy_send_timeout        100;
-                      proxy_read_timeout        100;
-                      proxy_buffer_size         8k;
-                      proxy_buffers            4 32k;
-                      proxy_busy_buffers_size  64k;
-                      proxy_temp_file_write_size 64k;
-                  }
+            # Start services
+            systemctl daemon-reload
+            systemctl start nginx
+            systemctl enable nginx
+            systemctl start jenkins
+            systemctl enable jenkins
 
-                  location /password.txt {
-                      alias /web/initalpass.html;
-                  }
-              }
-          }
-          EOL
-          
-          # Set permissions
-          chown -R jenkins:jenkins /var/lib/jenkins
-          chown -R jenkins:jenkins /var/cache/jenkins
-          chown -R jenkins:jenkins /var/log/jenkins
-          chmod 750 /var/lib/jenkins
-          
-          # Configure Jenkins
-          cat > /etc/sysconfig/jenkins << 'EOL'
-          JAVA_HOME="/usr/lib/jvm/java-17-amazon-corretto"
-          JENKINS_JAVA_OPTIONS="-Djava.awt.headless=true -Djenkins.install.runSetupWizard=true"
-          JENKINS_HOME="/var/lib/jenkins"
-          JENKINS_JAVA_CMD="/usr/bin/java"
-          JENKINS_USER="jenkins"
-          JENKINS_GROUP="jenkins"
-          JENKINS_PORT="8080"
-          JENKINS_DEBUG_LEVEL="5"
-          JENKINS_ENABLE_ACCESS_LOG="yes"
-          JENKINS_ARGS=""
-          EOL
-          
-          # Create Jenkins service file
-          cat > /usr/lib/systemd/system/jenkins.service << 'EOL'
-          [Unit]
-          Description=Jenkins Continuous Integration Server
-          Requires=network.target
-          After=network.target
+            # Wait for Jenkins to start
+            echo "Waiting for Jenkins to start..."
+            until [ -f /var/lib/jenkins/secrets/initialAdminPassword ]; do
+              sleep 5
+              echo "Waiting for Jenkins initial password..."
+            done
 
-          [Service]
-          Type=simple
-          User=jenkins
-          Group=jenkins
-          Environment="JENKINS_HOME=/var/lib/jenkins"
-          Environment="JAVA_HOME=/usr/lib/jvm/java-17-amazon-corretto"
-          Environment="PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin"
-          WorkingDirectory=/var/lib/jenkins
-          ExecStart=/usr/bin/java \
-              -Djava.awt.headless=true \
-              -Djenkins.install.runSetupWizard=true \
-              -Djava.io.tmpdir=/var/cache/jenkins/tmp \
-              -jar /usr/share/java/jenkins.war \
-              --logfile=/var/log/jenkins/jenkins.log \
-              --webroot=/var/cache/jenkins/war \
-              --httpPort=8080
-          Restart=on-failure
-          RestartSec=10
-          LimitNOFILE=65536
-          LimitNPROC=4096
+            # Copy initial password
+            cp /var/lib/jenkins/secrets/initialAdminPassword /web/initalpass.html
+            chown nginx:nginx /web/initalpass.html
 
-          [Install]
-          WantedBy=multi-user.target
-          EOL
-          
-          # Set correct permissions
-          chown root:root /etc/sysconfig/jenkins
-          chmod 644 /etc/sysconfig/jenkins
-          chown root:root /usr/lib/systemd/system/jenkins.service
-          chmod 644 /usr/lib/systemd/system/jenkins.service
-          
-          # Start and enable services
-          systemctl daemon-reload
-          
-          # Start nginx
-          systemctl start nginx
-          systemctl enable nginx
-          
-          # Start Jenkins
-          systemctl start jenkins
-          systemctl enable jenkins
-          
-          # Wait for Jenkins to start and get initial admin password
-          echo "Waiting for Jenkins to start and generate initial admin password..."
-          while [ ! -f /var/lib/jenkins/secrets/initialAdminPassword ]; do
-            sleep 5
-          done
-          
-          # Copy Jenkins initial admin password
-          cp /var/lib/jenkins/secrets/initialAdminPassword /web/initalpass.html
-          chown nginx:nginx /web/initalpass.html
-          
-          # Configure AWS CLI for jenkins user
-          sudo -u jenkins aws configure set region ${AWS::Region}
-          sudo -u jenkins aws configure set output json
-          
-          # Wait for Jenkins to finish setup
-          while [ ! -f /var/lib/jenkins/jenkins.install.InstallUtil.lastExecVersion ]; do
-            echo "Waiting for Jenkins to finish setup..."
-            sleep 10
-          done
-          
-          # Print installation status
-          echo "=== Installation Status ==="
-          echo "Java Version:"
-          java -version
-          echo "Jenkins Service Status:"
-          systemctl status jenkins
-          echo "Nginx Service Status:"
-          systemctl status nginx
-          echo "=== End Status ==="
-          
-          # Signal completion to CloudFormation
-          /opt/aws/bin/cfn-signal -e $? \
-            --stack ${AWS::StackName} \
-            --resource JenkinsServer \
-            --region ${AWS::Region}
+            # Configure AWS CLI
+            sudo -u jenkins aws configure set region ${AWS::Region}
+            sudo -u jenkins aws configure set output json
+
+            # Wait for Jenkins to complete setup
+            until [ -f /var/lib/jenkins/jenkins.install.InstallUtil.lastExecVersion ]; do
+              sleep 5
+              echo "Waiting for Jenkins setup..."
+            done
+
+            # Signal success
+            /opt/aws/bin/cfn-signal -e 0 --stack ${AWS::StackName} --resource JenkinsServer --region ${AWS::Region}
 
       Tags:
         - Key: Name
           Value: Jenkins Server
-    CreationPolicy:
-      ResourceSignal:
-        Timeout: PT15M
 
   JenkinsSecurityGroup:
     Type: AWS::EC2::SecurityGroup
@@ -492,10 +380,29 @@ Resources:
         - Key: Name
           Value: Jenkins-SecurityGroup
 
-  ELBSG:
+  WSSG:
     Type: AWS::EC2::SecurityGroup
     Properties:
-      GroupDescription: Enable HTTP access from anywhere
+      GroupDescription: Enable HTTP access from ELB
+      VpcId: !Ref VpcId
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 80
+          ToPort: 80
+          CidrIp: !Ref YourIPRange
+        - IpProtocol: tcp
+          FromPort: 0
+          ToPort: 65535
+          SourceSecurityGroupId: !Ref ALBSG
+
+      Tags:
+        - Key: Name
+          Value: WebServer-SecurityGroup
+  
+  ALBSG:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Security group for ALB
       VpcId: !Ref VpcId
       SecurityGroupIngress:
         - IpProtocol: tcp
@@ -504,25 +411,8 @@ Resources:
           CidrIp: 0.0.0.0/0
       Tags:
         - Key: Name
-          Value: ELB-SecurityGroup
+          Value: ALB-SecurityGroup
 
-  WSSG:
-    Type: AWS::EC2::SecurityGroup
-    Properties:
-      GroupDescription: Enable HTTP access from ELB
-      VpcId: !Ref VpcId
-      SecurityGroupIngress:
-        - IpProtocol: tcp
-          FromPort: 22
-          ToPort: 22
-          CidrIp: !Ref YourIPRange
-        - IpProtocol: tcp
-          FromPort: 80
-          ToPort: 80
-          SourceSecurityGroupId: !Ref ELBSG
-      Tags:
-        - Key: Name
-          Value: WebServer-SecurityGroup
   CodeDeployBucket:
     Type: AWS::S3::Bucket
     Properties:
@@ -576,7 +466,17 @@ Resources:
       ManagedPolicyArns:
         - arn:aws:iam::aws:policy/AWSCodeDeployFullAccess
         - arn:aws:iam::aws:policy/AWSCodeBuildAdminAccess
-
+        - arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore
+      Policies:
+        - PolicyName: CloudFormationSignal
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - cloudformation:SignalResource
+                Resource: !Sub arn:aws:cloudformation:${AWS::Region}:${AWS::AccountId}:stack/${AWS::StackName}/*
+  
   JenkinsInstanceProfile:
     Type: AWS::IAM::InstanceProfile
     Properties:
@@ -623,6 +523,7 @@ Resources:
             Action: sts:AssumeRole
       ManagedPolicyArns:
         - arn:aws:iam::aws:policy/service-role/AWSCodeDeployRole
+        - 
       Path: /
 
   InstanceRole:
@@ -638,10 +539,133 @@ Resources:
             Action:
               - sts:AssumeRole
       ManagedPolicyArns:
-        - arn:aws:iam::aws:policy/service-role/AWSCodeDeployRole
+        - arn:aws:iam::aws:policy/AWSCodeDeployFullAccess
         - arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore
+      Policies:
+        - PolicyName: CloudFormationSignalWS
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - cloudformation:SignalResource
+                Resource: !Sub arn:aws:cloudformation:${AWS::Region}:${AWS::AccountId}:stack/${AWS::StackName}/*        
       Path: /
 
+  WSLaunchTemplate:
+    Type: AWS::EC2::LaunchTemplate
+    Properties:
+      LaunchTemplateName: !Sub ${AWS::StackName}-launch-template
+      LaunchTemplateData:
+        ImageId: !FindInMap [AWSRegionArch2AMI, !Ref "AWS::Region", AMI]
+        InstanceType: !Ref CodedeployInstanceType
+        SecurityGroupIds:
+          - !Ref WSSG
+        KeyName: !Ref KeyName
+        IamInstanceProfile:
+          Name: !Ref CodeDeployInstanceProfile
+        UserData: 
+          Fn::Base64: 
+            !Sub |
+              #!/bin/bash -xe
+
+              # Enable logging
+              exec > >(tee /var/log/user-data.log|logger -t user-data -s 2>/dev/console) 2>&1
+
+              # Update system and install required packages
+              dnf update -y
+              dnf install -y aws-cfn-bootstrap ruby wget
+
+              # Install CodeDeploy Agent
+              cd /home/ec2-user
+              wget https://aws-codedeploy-${AWS::Region}.s3.amazonaws.com/latest/install
+              chmod +x ./install
+              ./install auto
+
+              # Start and enable CodeDeploy Agent
+              systemctl start codedeploy-agent
+
+              
+              systemctl enable codedeploy-agent
+
+              # Install and configure Apache
+              dnf install -y httpd
+
+              systemctl start httpd
+              systemctl enable httpd
+
+              # Create test page
+              echo "<html><body><h1>Instance is running</h1></body></html>" > /var/www/html/index.html
+
+              # Wait for services to be fully operational
+              echo "Waiting for services to start..."
+              sleep 10
+              echo "Installing dependencies..."
+              curl https://bootstrap.pypa.io/get-pip.py -o get-pip.py
+              python3 get-pip.py
+              python3 -m pip install --upgrade pip
+              python3 -m pip install flask>=3.0.0 werkzeug>=3.0.0 pytest pytest-cov
+              # Print status information
+              echo "=== Installation Status ==="
+              systemctl status codedeploy-agent
+              systemctl status httpd
+              echo "=== End Status ==="
+
+              # Signal success
+              echo "Installation completed successfully"
+              /opt/aws/bin/cfn-signal -e 0 --stack ${AWS::StackName} --resource WSASG --region ${AWS::Region}
+
+        TagSpecifications:
+          - ResourceType: instance
+            Tags:
+              - Key: Name
+                Value: CodeDeploy WebServer
+          - ResourceType: volume
+            Tags:
+              - Key: Name
+                Value: CodeDeploy WebServer Volume
+        MetadataOptions:
+          HttpEndpoint: enabled
+
+  CodeDeployInstanceProfile:
+    Type: AWS::IAM::InstanceProfile
+    Properties:
+      Path: /
+      Roles:
+        - !Ref InstanceRole
+  
+  WSASG:
+    Type: AWS::AutoScaling::AutoScalingGroup
+    Properties:
+      LaunchTemplate:
+        LaunchTemplateId: !Ref WSLaunchTemplate
+        Version: !GetAtt WSLaunchTemplate.LatestVersionNumber
+      VPCZoneIdentifier:
+        - !Ref PublicSubnet1
+        - !Ref PublicSubnet2
+      MinSize: 2
+      MaxSize: 4
+      DesiredCapacity: !Ref InstanceCount
+      TargetGroupARNs:
+        - !Ref ALBTargetGroup
+      HealthCheckGracePeriod: 300
+      HealthCheckType: ELB
+      Tags:
+        - Key: Name
+          Value: CodeDeploy WebServer
+          PropagateAtLaunch: true
+    CreationPolicy:
+      ResourceSignal:
+        Count: !Ref InstanceCount
+        Timeout: PT15M
+    UpdatePolicy:
+      AutoScalingRollingUpdate:
+        MinInstancesInService: 1
+        MaxBatchSize: 1
+        PauseTime: PT15M
+        WaitOnResourceSignals: true
+
+  # Make sure the Instance Role has necessary permissions
   InstanceRolePolicies:
     Type: AWS::IAM::Policy
     Properties:
@@ -656,136 +680,61 @@ Resources:
               - s3:PutObject
               - cloudformation:Describe*
               - cloudformation:GetTemplate
+              - cloudformation:SignalResource
+              - autoscaling:CompleteLifecycleAction
+              - autoscaling:Describe*
               - cloudwatch:*
               - logs:*
             Resource: "*"
       Roles:
         - !Ref InstanceRole
 
-  CodeDeployInstanceProfile:
-    Type: AWS::IAM::InstanceProfile
+  ApplicationLoadBalancer:
+    Type: AWS::ElasticLoadBalancingV2::LoadBalancer
     Properties:
-      Path: /
-      Roles:
-        - !Ref InstanceRole
-  WSLaunchTemplate:
-    Type: AWS::EC2::LaunchTemplate
-    Properties:
-      LaunchTemplateName: !Sub ${AWS::StackName}-launch-template
-      LaunchTemplateData:
-        ImageId: !FindInMap 
-          - AWSRegionArch2AMI
-          - !Ref AWS::Region
-          - AMI
-        InstanceType: !Ref CodedeployInstanceType
-        SecurityGroupIds:
-          - !Ref WSSG
-        KeyName: !Ref KeyName
-        IamInstanceProfile:
-          Name: !Ref CodeDeployInstanceProfile
-        UserData:
-          Fn::Base64: !Sub |
-            #!/bin/bash -xe
-            # Update system and install required packages
-            yum update -y
-            yum install -y ruby wget aws-cfn-bootstrap
-
-            # Install CodeDeploy Agent
-            cd /home/ec2-user
-            wget https://aws-codedeploy-${AWS::Region}.s3.amazonaws.com/latest/install
-            chmod +x ./install
-            ./install auto
-
-            # Verify CodeDeploy Agent is running
-            service codedeploy-agent status
-            
-            # Install Apache for testing
-            yum install -y httpd
-            systemctl start httpd
-            systemctl enable httpd
-            
-            # Create a test page
-            echo "<html><body><h1>Instance is running</h1></body></html>" > /var/www/html/index.html
-
-            # Wait for CodeDeploy Agent to start
-            until service codedeploy-agent status | grep 'running'; do
-              sleep 10
-              echo "Waiting for CodeDeploy agent to start..."
-            done
-
-            # Signal success
-            /opt/aws/bin/cfn-signal -e $? \
-              --stack ${AWS::StackName} \
-              --resource WSASG \
-              --region ${AWS::Region}
-
-        TagSpecifications:
-          - ResourceType: instance
-            Tags:
-              - Key: Name
-                Value: CodeDeploy WebServer
-          - ResourceType: volume
-            Tags:
-              - Key: Name
-                Value: CodeDeploy WebServer Volume
-        MetadataOptions:
-          HttpTokens: required
-          HttpEndpoint: enabled
-
-  WSASG:
-    Type: AWS::AutoScaling::AutoScalingGroup
-    Properties:
-      LaunchTemplate:
-        LaunchTemplateId: !Ref WSLaunchTemplate
-        Version: !GetAtt WSLaunchTemplate.LatestVersionNumber
-      VPCZoneIdentifier:
-        - !Ref PublicSubnet1
-        - !Ref PublicSubnet2
-      MinSize: 2
-      MaxSize: 4
-      DesiredCapacity: !Ref InstanceCount
-      LoadBalancerNames:
-        - !Ref ELB
-      HealthCheckType: ELB
-      HealthCheckGracePeriod: 300
-      Tags:
-        - Key: Name
-          Value: CodeDeploy WebServer
-          PropagateAtLaunch: true
-    CreationPolicy:
-      ResourceSignal:
-        Count: !Ref InstanceCount
-        Timeout: PT30M  # Increased from PT15M to PT30M
-    UpdatePolicy:
-      AutoScalingRollingUpdate:
-        MinInstancesInService: 1
-        MaxBatchSize: 1
-        PauseTime: PT15M
-        WaitOnResourceSignals: true
-
-  ELB:
-    Type: AWS::ElasticLoadBalancing::LoadBalancer
-    Properties:
-      HealthCheck:
-        HealthyThreshold: '2'
-        Interval: '30'
-        Target: 'HTTP:80/'
-        Timeout: '5'
-        UnhealthyThreshold: '5'
-      Listeners:
-        - InstancePort: '80'
-          LoadBalancerPort: '80'
-          Protocol: HTTP
-          InstanceProtocol: HTTP
-      SecurityGroups:
-        - !Ref ELBSG
+      Name: !Sub ${AWS::StackName}-alb
+      Scheme: internet-facing
+      LoadBalancerAttributes:
+        - Key: idle_timeout.timeout_seconds
+          Value: '60'
       Subnets:
         - !Ref PublicSubnet1
         - !Ref PublicSubnet2
-      CrossZone: true
+      SecurityGroups:
+        - !Ref ALBSG
       Tags:
         - Key: Name
-          Value: CodeDeploy-ELB
+          Value: CodeDeploy-ALB
+
+  ALBListener:
+    Type: AWS::ElasticLoadBalancingV2::Listener
+    Properties:
+      DefaultActions:
+        - Type: forward
+          TargetGroupArn: !Ref ALBTargetGroup
+      LoadBalancerArn: !Ref ApplicationLoadBalancer
+      Port: 80
+      Protocol: HTTP
+
+  ALBTargetGroup:
+    Type: AWS::ElasticLoadBalancingV2::TargetGroup
+    Properties:
+      HealthCheckEnabled: true
+      HealthCheckIntervalSeconds: 30
+      HealthCheckPath: /
+      HealthCheckPort: traffic-port
+      HealthCheckProtocol: HTTP
+      HealthCheckTimeoutSeconds: 5
+      HealthyThresholdCount: 2
+      Name: !Sub ${AWS::StackName}-tg
+      Port: 80
+      Protocol: HTTP
+      TargetType: instance
+      UnhealthyThresholdCount: 5
+      VpcId: !Ref VpcId
+      Tags:
+        - Key: Name
+          Value: CodeDeploy-TargetGroup
 
   DemoApplication:
     Type: AWS::CodeDeploy::Application
@@ -805,12 +754,13 @@ Resources:
       AutoScalingGroups:
         - !Ref WSASG
       LoadBalancerInfo:
-        ElbInfoList:
-          - Name: !Ref ELB
+        TargetGroupInfoList:
+          - Name: !GetAtt ALBTargetGroup.TargetGroupName
       Ec2TagFilters:
         - Key: Name
           Value: CodeDeploy WebServer
           Type: KEY_AND_VALUE
+
 Outputs:
   JenkinsServerURL:
     Description: URL of the Jenkins Server
@@ -820,9 +770,9 @@ Outputs:
     Description: URL to retrieve the initial admin password for Jenkins
     Value: !Sub http://${JenkinsServer.PublicDnsName}/password.txt
 
-  WebsiteURL:
-    Description: URL of the load balanced website
-    Value: !Sub http://${ELB.DNSName}
+  LoadBalancerURL:
+    Description: URL of the Application Load Balancer
+    Value: !Sub http://${ApplicationLoadBalancer.DNSName}
 
   CodeDeployApplicationName:
     Description: CodeDeploy Application Name
@@ -860,14 +810,18 @@ Outputs:
     Description: ID of Launch Template
     Value: !Ref WSLaunchTemplate
 
-  LoadBalancerDNSName:
-    Description: DNS Name of Elastic Load Balancer
-    Value: !GetAtt ELB.DNSName
+  LoadBalancerDNS:
+    Description: DNS Name of Application Load Balancer
+    Value: !GetAtt ApplicationLoadBalancer.DNSName
+  TargetGroupARN:
+    Description: ARN of Target Group
+    Value: !Ref ALBTargetGroup
+
 
   SecurityGroups:
     Description: Security Groups Created
     Value: !Join 
       - ', '
       - - !Ref JenkinsSecurityGroup
-        - !Ref ELBSG
+        - !Ref ALBSG
         - !Ref WSSG
