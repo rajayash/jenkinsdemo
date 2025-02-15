@@ -263,11 +263,8 @@ Resources:
       UserData:
         Fn::Base64:
           !Sub |
-            #!/bin/bash -xe
-            
-            # Enable logging
-            exec > >(tee /var/log/user-data.log|logger -t user-data -s 2>/dev/console) 2>&1
-
+            #!/bin/bash
+ 
             # Update system
             dnf update -y
 
@@ -346,9 +343,6 @@ Resources:
               echo "Waiting for Jenkins setup..."
             done
 
-            # Signal success
-            /opt/aws/bin/cfn-signal -e 0 --stack ${AWS::StackName} --resource JenkinsServer --region ${AWS::Region}
-
       Tags:
         - Key: Name
           Value: Jenkins Server
@@ -387,14 +381,13 @@ Resources:
       VpcId: !Ref VpcId
       SecurityGroupIngress:
         - IpProtocol: tcp
-          FromPort: 80
-          ToPort: 80
-          CidrIp: !Ref YourIPRange
-        - IpProtocol: tcp
           FromPort: 0
           ToPort: 65535
           SourceSecurityGroupId: !Ref ALBSG
-
+        - IpProtocol: http
+          FromPort: 80
+          ToPort: 80
+          SourceSecurityGroupId: !Ref ALBSG
       Tags:
         - Key: Name
           Value: WebServer-SecurityGroup
@@ -523,7 +516,7 @@ Resources:
             Action: sts:AssumeRole
       ManagedPolicyArns:
         - arn:aws:iam::aws:policy/service-role/AWSCodeDeployRole
-        - 
+        - arn:aws:iam::aws:policy/AmazonS3FullAccess
       Path: /
 
   InstanceRole:
@@ -567,10 +560,7 @@ Resources:
         UserData: 
           Fn::Base64: 
             !Sub |
-              #!/bin/bash -xe
-
-              # Enable logging
-              exec > >(tee /var/log/user-data.log|logger -t user-data -s 2>/dev/console) 2>&1
+              #!/bin/bash
 
               # Update system and install required packages
               dnf update -y
@@ -578,7 +568,7 @@ Resources:
 
               # Install CodeDeploy Agent
               cd /home/ec2-user
-              wget https://aws-codedeploy-${AWS::Region}.s3.amazonaws.com/latest/install
+              wget https://aws-codedeploy-us-east-1.s3.amazonaws.com/latest/install
               chmod +x ./install
               ./install auto
 
@@ -587,29 +577,24 @@ Resources:
 
               systemctl enable codedeploy-agent
 
+              curl https://bootstrap.pypa.io/get-pip.py -o get-pip.py
               python3 get-pip.py
               python3 -m pip install --upgrade pip
               python3 -m pip install "flask>=3.0.0" "werkzeug>=3.0.0" "pytest" "pytest-cov"
 
               # Create test page
-              echo 'from flask import Flask;app = Flask(__name__);@app.route("/");def hello_world():;    return "Hello, World!";if __name__ == "__main__":;    app.run(host="0.0.0.0", port=5000, debug=True)' | tr ';' '\n' > hello.py
-              python3 hello.py
+              echo 'from flask import Flask;app = Flask(__name__);@app.route("/");def hello_world():;    return "Hello, World!";if __name__ == "__main__":;    app.run(host="0.0.0.0", port=80, debug=True)' | tr ';' '\n' > hello.py
+              python3 hello.py > /dev/null 2>&1 &
 
               # Wait for services to be fully operational
               echo "Waiting for services to start..."
               sleep 10
-              echo "Installing dependencies..."
-              curl https://bootstrap.pypa.io/get-pip.py -o get-pip.py
 
               # Print status information
               echo "=== Installation Status ==="
               systemctl status codedeploy-agent
 
               echo "=== End Status ==="
-
-              # Signal success
-              echo "Installation completed successfully"
-              /opt/aws/bin/cfn-signal -e 0 --stack ${AWS::StackName} --resource WSASG --region ${AWS::Region}
 
         TagSpecifications:
           - ResourceType: instance
