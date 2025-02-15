@@ -1,9 +1,9 @@
 AWSTemplateFormatVersion: '2010-09-09'
-Description: >-
-  Jenkins CodeDeploy: This template creates the CodeBuild project, IAM Roles, 
-  Jenkins server with pre-installed jenkins plugins and CodeDeploy instances to deploy the application on. 
-  **WARNING** This template creates Amazon EC2 instances and related resources. 
-  You will be billed for the AWS resources used if you create a stack from this template.
+Description: 'Jenkins CodeDeploy: This template creates the CodeBuild project,
+  IAM Roles,  Jenkins server with pre-installed jenkins plugins and CodeDeploy
+  instances to deploy the application on.  **WARNING** This template creates
+  Amazon EC2 instances and related resources.  You will be billed for the AWS
+  resources used if you create a stack from this template.'
 
 Parameters:
   CodedeployInstanceType:
@@ -57,7 +57,8 @@ Parameters:
     ConstraintDescription: Must be a number between 2 and 4.
 
   KeyName:
-    Description: The EC2 Key Pair to allow SSH access to CodeDeploy EC2 instances and Jenkins Server
+    Description: The EC2 Key Pair to allow SSH access to CodeDeploy EC2 instances
+      and Jenkins Server
     Type: AWS::EC2::KeyPair::KeyName
     ConstraintDescription: must be the name of an existing EC2 KeyPair.
 
@@ -67,7 +68,8 @@ Parameters:
     ConstraintDescription: must be the name of an existing VPC.
 
   YourIPRange:
-    Description: CIDR block of the network from where you will connect to the Jenkins server using HTTP and SSH
+    Description: CIDR block of the network from where you will connect to the
+      Jenkins server using HTTP and SSH
     Type: String
     MinLength: 9
     MaxLength: 18
@@ -75,12 +77,14 @@ Parameters:
     ConstraintDescription: must be a valid IP CIDR range of the form x.x.x.x/x.
 
   PublicSubnet1:
-    Description: The first public subnet where the Jenkins EC2 instance, ELB and CodeDeploy Web Servers will be launched
+    Description: The first public subnet where the Jenkins EC2 instance, ELB and
+      CodeDeploy Web Servers will be launched
     Type: AWS::EC2::Subnet::Id
     ConstraintDescription: Must be a valid Public VPC Subnet.
 
   PublicSubnet2:
-    Description: The second public subnet where the ELB and CodeDeploy Web Servers will be launched
+    Description: The second public subnet where the ELB and CodeDeploy Web Servers
+      will be launched
     Type: AWS::EC2::Subnet::Id
     ConstraintDescription: Must be a valid Public VPC Subnet.
 
@@ -91,7 +95,7 @@ Parameters:
 Mappings:
   AWSRegionArch2AMI:
     us-east-1:
-      AMI: ami-0e731c8a588258d0d  # Amazon Linux 2023
+      AMI: ami-0e731c8a588258d0d # Amazon Linux 2023
     us-east-2:
       AMI: ami-0b0b4f62b42f656c2
     us-west-1:
@@ -122,7 +126,7 @@ Resources:
                 - codebuild.amazonaws.com
             Action:
               - sts:AssumeRole
-      Path: "/"
+      Path: /
       ManagedPolicyArns:
         - arn:aws:iam::aws:policy/AWSCodeBuildAdminAccess
 
@@ -142,7 +146,7 @@ Resources:
               - s3:GetObjectVersion
               - s3:PutObject
               - s3:ListBucket
-            Resource: "*"
+            Resource: '*'
       Roles:
         - !Ref CodeBuildRole
 
@@ -173,9 +177,6 @@ Resources:
 
   JenkinsServer:
     Type: AWS::EC2::Instance
-    CreationPolicy:
-      ResourceSignal:
-        Timeout: PT30M
     Metadata:
       AWS::CloudFormation::Init:
         configSets:
@@ -246,12 +247,15 @@ Resources:
                         }
                     }
                 }
-              mode: "000444"
+              mode: '000444'
               owner: root
               group: root
     Properties:
       KeyName: !Ref KeyName
-      ImageId: !FindInMap [AWSRegionArch2AMI, !Ref "AWS::Region", AMI]
+      ImageId: !FindInMap
+        - AWSRegionArch2AMI
+        - !Ref AWS::Region
+        - AMI
       InstanceType: !Ref JenkinsInstanceType
       IamInstanceProfile: !Ref JenkinsInstanceProfile
       NetworkInterfaces:
@@ -260,82 +264,81 @@ Resources:
           GroupSet:
             - !Ref JenkinsSecurityGroup
           SubnetId: !Ref PublicSubnet1
-      UserData:
-        Fn::Base64:
-          !Sub |
-            #!/bin/bash
- 
-            # Update system
-            dnf update -y
+      UserData: !Base64
+        Fn::Sub: |
+          #!/bin/bash
 
-            # Install required packages
-            dnf install -y aws-cfn-bootstrap wget git
+          # Update system
+          dnf update -y
 
-            # Create directories
-            mkdir -p /web
-            mkdir -p /var/lib/jenkins
-            mkdir -p /var/cache/jenkins/tmp
-            mkdir -p /var/log/jenkins
+          # Install required packages
+          dnf install -y aws-cfn-bootstrap wget git
 
-            # Initialize cfn
-            /opt/aws/bin/cfn-init -v \
-              --stack ${AWS::StackName} \
-              --resource JenkinsServer \
-              --configsets install_all \
-              --region ${AWS::Region}
+          # Create directories
+          mkdir -p /web
+          mkdir -p /var/lib/jenkins
+          mkdir -p /var/cache/jenkins/tmp
+          mkdir -p /var/log/jenkins
 
-            # Install Java 17
-            dnf remove -y java* || true
-            dnf install -y java-17-amazon-corretto-devel
- 
-            # Install Jenkins
-            wget -O /etc/yum.repos.d/jenkins.repo https://pkg.jenkins.io/redhat-stable/jenkins.repo
-            rpm --import https://pkg.jenkins.io/redhat-stable/jenkins.io-2023.key
-            dnf clean all
-            dnf makecache
-            dnf install -y --nogpgcheck jenkins
+          # Initialize cfn
+          /opt/aws/bin/cfn-init -v \
+            --stack ${AWS::StackName} \
+            --resource JenkinsServer \
+            --configsets install_all \
+            --region ${AWS::Region}
 
-            # Set permissions
-            chown -R jenkins:jenkins /var/lib/jenkins
-            chown -R jenkins:jenkins /var/cache/jenkins
-            chown -R jenkins:jenkins /var/log/jenkins
-            chmod 750 /var/lib/jenkins
+          # Install Java 17
+          dnf remove -y java* || true
+          dnf install -y java-17-amazon-corretto-devel
 
-            # Configure Jenkins
-            cat > /etc/sysconfig/jenkins << 'EOL'
-            JAVA_HOME="/usr/lib/jvm/java-17-amazon-corretto"
-            JENKINS_JAVA_OPTIONS="-Djava.awt.headless=true -Djenkins.install.runSetupWizard=true"
-            JENKINS_HOME="/var/lib/jenkins"
-            JENKINS_JAVA_CMD="/usr/bin/java"
-            JENKINS_USER="jenkins"
-            JENKINS_GROUP="jenkins"
-            JENKINS_PORT="8080"
-            JENKINS_DEBUG_LEVEL="5"
-            JENKINS_ENABLE_ACCESS_LOG="yes"
-            JENKINS_ARGS=""
-            EOL
+          # Install Jenkins
+          wget -O /etc/yum.repos.d/jenkins.repo https://pkg.jenkins.io/redhat-stable/jenkins.repo
+          rpm --import https://pkg.jenkins.io/redhat-stable/jenkins.io-2023.key
+          dnf clean all
+          dnf makecache
+          dnf install -y --nogpgcheck jenkins
 
-            # Start services
-            systemctl daemon-reload
-            systemctl start nginx
-            systemctl enable nginx
-            systemctl start jenkins
-            systemctl enable jenkins
+          # Set permissions
+          chown -R jenkins:jenkins /var/lib/jenkins
+          chown -R jenkins:jenkins /var/cache/jenkins
+          chown -R jenkins:jenkins /var/log/jenkins
+          chmod 750 /var/lib/jenkins
 
-            # Wait for Jenkins to start
-            echo "Waiting for Jenkins to start..."
-            until [ -f /var/lib/jenkins/secrets/initialAdminPassword ]; do
-              sleep 5
-              echo "Waiting for Jenkins initial password..."
-            done
+          # Configure Jenkins
+          cat > /etc/sysconfig/jenkins << 'EOL'
+          JAVA_HOME="/usr/lib/jvm/java-17-amazon-corretto"
+          JENKINS_JAVA_OPTIONS="-Djava.awt.headless=true -Djenkins.install.runSetupWizard=true"
+          JENKINS_HOME="/var/lib/jenkins"
+          JENKINS_JAVA_CMD="/usr/bin/java"
+          JENKINS_USER="jenkins"
+          JENKINS_GROUP="jenkins"
+          JENKINS_PORT="8080"
+          JENKINS_DEBUG_LEVEL="5"
+          JENKINS_ENABLE_ACCESS_LOG="yes"
+          JENKINS_ARGS=""
+          EOL
 
-            # Copy initial password
-            cp /var/lib/jenkins/secrets/initialAdminPassword /web/initalpass.html
-            chown nginx:nginx /web/initalpass.html
+          # Start services
+          systemctl daemon-reload
+          systemctl start nginx
+          systemctl enable nginx
+          systemctl start jenkins
+          systemctl enable jenkins
 
-            # Configure AWS CLI
-            sudo -u jenkins aws configure set region ${AWS::Region}
-            sudo -u jenkins aws configure set output json
+          # Wait for Jenkins to start
+          echo "Waiting for Jenkins to start..."
+          until [ -f /var/lib/jenkins/secrets/initialAdminPassword ]; do
+            sleep 5
+            echo "Waiting for Jenkins initial password..."
+          done
+
+          # Copy initial password
+          cp /var/lib/jenkins/secrets/initialAdminPassword /web/initalpass.html
+          chown nginx:nginx /web/initalpass.html
+
+          # Configure AWS CLI
+          sudo -u jenkins aws configure set region ${AWS::Region}
+          sudo -u jenkins aws configure set output json
 
       Tags:
         - Key: Name
@@ -385,7 +388,7 @@ Resources:
       Tags:
         - Key: Name
           Value: WebServer-SecurityGroup
-  
+
   ALBSG:
     Type: AWS::EC2::SecurityGroup
     Properties:
@@ -463,7 +466,7 @@ Resources:
                 Action:
                   - cloudformation:SignalResource
                 Resource: !Sub arn:aws:cloudformation:${AWS::Region}:${AWS::AccountId}:stack/${AWS::StackName}/*
-  
+
   JenkinsInstanceProfile:
     Type: AWS::IAM::InstanceProfile
     Properties:
@@ -492,7 +495,7 @@ Resources:
             Action:
               - codedeploy:*
               - codebuild:*
-            Resource: "*"
+            Resource: '*'
       Roles:
         - !Ref JenkinsRole
 
@@ -536,7 +539,7 @@ Resources:
               - Effect: Allow
                 Action:
                   - cloudformation:SignalResource
-                Resource: !Sub arn:aws:cloudformation:${AWS::Region}:${AWS::AccountId}:stack/${AWS::StackName}/*        
+                Resource: !Sub arn:aws:cloudformation:${AWS::Region}:${AWS::AccountId}:stack/${AWS::StackName}/*
       Path: /
 
   WSLaunchTemplate:
@@ -544,51 +547,53 @@ Resources:
     Properties:
       LaunchTemplateName: !Sub ${AWS::StackName}-launch-template
       LaunchTemplateData:
-        ImageId: !FindInMap [AWSRegionArch2AMI, !Ref "AWS::Region", AMI]
+        ImageId: !FindInMap
+          - AWSRegionArch2AMI
+          - !Ref AWS::Region
+          - AMI
         InstanceType: !Ref CodedeployInstanceType
         SecurityGroupIds:
           - !Ref WSSG
         KeyName: !Ref KeyName
         IamInstanceProfile:
           Name: !Ref CodeDeployInstanceProfile
-        UserData: 
-          Fn::Base64: 
-            !Sub |
-              #!/bin/bash
+        UserData: !Base64
+          Fn::Sub: |
+            #!/bin/bash
 
-              # Update system and install required packages
-              dnf update -y
-              dnf install -y aws-cfn-bootstrap ruby wget
+            # Update system and install required packages
+            dnf update -y
+            dnf install -y aws-cfn-bootstrap ruby wget
 
-              # Install CodeDeploy Agent
-              cd /home/ec2-user
-              wget https://aws-codedeploy-us-east-1.s3.amazonaws.com/latest/install
-              chmod +x ./install
-              ./install auto
+            # Install CodeDeploy Agent
+            cd /home/ec2-user
+            wget https://aws-codedeploy-us-east-1.s3.amazonaws.com/latest/install
+            chmod +x ./install
+            ./install auto
 
-              # Start and enable CodeDeploy Agent
-              systemctl start codedeploy-agent
+            # Start and enable CodeDeploy Agent
+            systemctl start codedeploy-agent
 
-              systemctl enable codedeploy-agent
+            systemctl enable codedeploy-agent
 
-              curl https://bootstrap.pypa.io/get-pip.py -o get-pip.py
-              python3 get-pip.py
-              python3 -m pip install --upgrade pip
-              python3 -m pip install "flask>=3.0.0" "werkzeug>=3.0.0" "pytest" "pytest-cov"
+            curl https://bootstrap.pypa.io/get-pip.py -o get-pip.py
+            python3 get-pip.py
+            python3 -m pip install --upgrade pip
+            python3 -m pip install "flask>=3.0.0" "werkzeug>=3.0.0" "pytest" "pytest-cov"
 
-              # Create test page
-              echo 'from flask import Flask;app = Flask(__name__);@app.route("/");def hello_world():;    return "Hello, World!";if __name__ == "__main__":;    app.run(host="0.0.0.0", port=80, debug=True)' | tr ';' '\n' > hello.py
-              python3 hello.py > /dev/null 2>&1 &
+            # Create test page
+            echo 'from flask import Flask;app = Flask(__name__);@app.route("/");def hello_world():;    return "Hello, World!";if __name__ == "__main__":;    app.run(host="0.0.0.0", port=80, debug=True)' | tr ';' '\n' > hello.py
+            python3 hello.py > /dev/null 2>&1 &
 
-              # Wait for services to be fully operational
-              echo "Waiting for services to start..."
-              sleep 10
+            # Wait for services to be fully operational
+            echo "Waiting for services to start..."
+            sleep 10
 
-              # Print status information
-              echo "=== Installation Status ==="
-              systemctl status codedeploy-agent
+            # Print status information
+            echo "=== Installation Status ==="
+            systemctl status codedeploy-agent
 
-              echo "=== End Status ==="
+            echo "=== End Status ==="
 
         TagSpecifications:
           - ResourceType: instance
@@ -608,7 +613,7 @@ Resources:
       Path: /
       Roles:
         - !Ref InstanceRole
-  
+
   WSASG:
     Type: AWS::AutoScaling::AutoScalingGroup
     Properties:
@@ -629,10 +634,6 @@ Resources:
         - Key: Name
           Value: CodeDeploy WebServer
           PropagateAtLaunch: true
-    CreationPolicy:
-      ResourceSignal:
-        Count: !Ref InstanceCount
-        Timeout: PT30M
     UpdatePolicy:
       AutoScalingRollingUpdate:
         MinInstancesInService: 1
@@ -660,7 +661,7 @@ Resources:
               - autoscaling:Describe*
               - cloudwatch:*
               - logs:*
-            Resource: "*"
+            Resource: '*'
       Roles:
         - !Ref InstanceRole
 
@@ -792,10 +793,9 @@ Outputs:
     Description: ARN of Target Group
     Value: !Ref ALBTargetGroup
 
-
   SecurityGroups:
     Description: Security Groups Created
-    Value: !Join 
+    Value: !Join
       - ', '
       - - !Ref JenkinsSecurityGroup
         - !Ref ALBSG
