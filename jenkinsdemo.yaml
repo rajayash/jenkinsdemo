@@ -175,7 +175,7 @@ Resources:
     Type: AWS::EC2::Instance
     CreationPolicy:
       ResourceSignal:
-        Timeout: PT15M
+        Timeout: PT30M
     Metadata:
       AWS::CloudFormation::Init:
         configSets:
@@ -337,12 +337,6 @@ Resources:
             sudo -u jenkins aws configure set region ${AWS::Region}
             sudo -u jenkins aws configure set output json
 
-            # Wait for Jenkins to complete setup
-            until [ -f /var/lib/jenkins/jenkins.install.InstallUtil.lastExecVersion ]; do
-              sleep 5
-              echo "Waiting for Jenkins setup..."
-            done
-
       Tags:
         - Key: Name
           Value: Jenkins Server
@@ -384,7 +378,7 @@ Resources:
           FromPort: 0
           ToPort: 65535
           SourceSecurityGroupId: !Ref ALBSG
-        - IpProtocol: http
+        - IpProtocol: tcp
           FromPort: 80
           ToPort: 80
           SourceSecurityGroupId: !Ref ALBSG
@@ -638,12 +632,12 @@ Resources:
     CreationPolicy:
       ResourceSignal:
         Count: !Ref InstanceCount
-        Timeout: PT15M
+        Timeout: PT30M
     UpdatePolicy:
       AutoScalingRollingUpdate:
         MinInstancesInService: 1
         MaxBatchSize: 1
-        PauseTime: PT15M
+        PauseTime: PT30M
         WaitOnResourceSignals: true
 
   # Make sure the Instance Role has necessary permissions

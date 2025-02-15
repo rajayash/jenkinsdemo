@@ -3,6 +3,12 @@ os: linux
 files:
   - source: /
     destination: /web/
+permissions:
+  - object: /web/scripts
+    pattern: "*.sh"
+    mode: 755
+    type:
+      - file
 hooks:
   AfterInstall:
     - location: scripts/mkdir.sh
