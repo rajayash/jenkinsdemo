@@ -705,7 +705,7 @@ Resources:
       Port: 80
       Protocol: HTTP
       TargetType: instance
-      UnhealthyThresholdCount: 5
+      UnhealthyThresholdCount: 10
       VpcId: !Ref VpcId
       Tags:
         - Key: Name
