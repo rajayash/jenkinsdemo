@@ -5,10 +5,13 @@ files:
     destination: /web/
     overwrite: true
 permissions:
-  - object: /web/scripts
-    pattern: "*.sh"
+  - object: /web/
+    pattern: "*"
+    owner: root
+    group: root
     mode: 777
     type:
+      - directory
       - file
 hooks:
   AfterInstall:
