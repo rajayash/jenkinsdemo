@@ -3,10 +3,11 @@ os: linux
 files:
   - source: /
     destination: /web/
+    overwrite: true
 permissions:
   - object: /web/scripts
     pattern: "*.sh"
-    mode: 755
+    mode: 777
     type:
       - file
 hooks:
