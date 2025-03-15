@@ -27,5 +27,5 @@ hooks:
       timeout: 300
       runas: root
   BlockTraffic:
-    - timeout: 60  # Reduce default timeout
+    - timeout: 1  # Reduce default timeout
       enabled: true
