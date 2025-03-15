@@ -89,7 +89,7 @@ Parameters:
 Mappings:
   AWSRegionArch2AMI:
     us-east-1:
-      AMI: ami-0e731c8a588258d0d # Amazon Linux 2023
+      AMI: ami-08b5b3a93ed654d19 # Amazon Linux 2023
     us-east-2:
       AMI: ami-0b0b4f62b42f656c2
     us-west-1:
