@@ -27,5 +27,6 @@ hooks:
       timeout: 300
       runas: root
   BlockTraffic:
-    - timeout: 1  # Reduce default timeout
+    - location: /tmp/null.sh
+      timeout: 1  # Reduce default timeout
       enabled: true
